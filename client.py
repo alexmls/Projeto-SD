@@ -24,11 +24,20 @@ def menu(opt):
         key = raw_input('Enter with key:')
         if len(key) > 40:
             print 'Enter a key less than 40 digits!!!'
+
+        elif ',' in key or '.' in key or '*' in key or ' ' in key or '=' in key:
+            print 'Just words or numbers'
         else:
             i = 1
 
     if opt == "1" or opt == "3":
-        sti = raw_input('Enter with String:')
+        j = 0
+        while j != 1:
+            sti = raw_input('Enter with String:')
+            if ',' in sti or '.' in sti or '*' in sti or ' ' in sti or '=' in sti:
+                print 'Just words or numbers'
+            else:
+                j = 1
         dtg = key + ',' + sti
         w = opt + '.' + dtg
 
@@ -50,7 +59,12 @@ def command():
         print ('### 4-Delete data ###')
         print ('')
         x = raw_input()
-        menu(x)
+        a = ['1', '2', '3', '4']
+        if x in a:
+            menu(x)
+        else:
+            print 'INVALID OPTION'
+
 
 def results():
     while True:

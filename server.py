@@ -6,24 +6,78 @@ import ConfigParser
 from threading import Thread
 import time
 from Queue import Queue
+import grpc
+from concurrent import futures
+import observer_pb2
+import observer_pb2_grpc
 
 config = ConfigParser.ConfigParser()
 config.read("connection.ini")  # reading the config file
 
 host = ''  # I AM THE HOST
 port = config.getint('Section one', 'port')  # using the config file values
-
+gport = config.getint('Section one', 'grpcport')  # cat the gRPC Port
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)  # creating a socket object
 orig = (host, port)
 s.bind(orig)  # bind the host and the port
 
 # num_threads = 20
 
-f = Queue()
-d = Queue()
-p = Queue()
+f = Queue()  # Queue for receive commands
+d = Queue()  # Queue for log in disk
+p = Queue()  # Queue for consume commands
+g = Queue()  # Queue for gRPC
 
 dty = {}  # empty dictionary
+
+
+def monit(kvalue):
+    if not g:  # if queue f is empty, sleep thread
+        # print('Worker...Waiting...')
+        time.sleep(1)
+    else:
+        val = g.get()  # retrieve new Queue element to monitore
+        f.put(val)  # put the elemente in Queue to process
+        f.task_done()
+        f.join()
+        if kvalue in val:
+            return val
+        else:
+            return 'Key doesent exist!!!'
+
+
+class ObserverService(observer_pb2_grpc.ObserverServicer):
+
+    def monitor(self, request, context):
+        i = 0
+        while i != 1:
+            temp = request.key
+            if ' ' in temp:
+                stp, ky = temp.split(' ')
+                if stp == 'stop':
+                    i = 1
+            else:
+                response = observer_pb2.InfoRep()
+                response.info = monit(request.key)
+                return response
+
+
+
+
+def grpcTh():
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+
+    observer_pb2_grpc.add_ObserverServicer_to_server(ObserverService(), server)
+
+    print('Starting gRPC Thread. Listen on port ', gport)
+    server.add_insecure_port('[::]:%s' % gport)
+    server.start()
+
+    try:  # loop to keep alive
+        while True:
+            time.sleep(86400)
+    except KeyboardInterrupt:
+        server.stop(0)
 
 
 def consumer(stg, clt):
@@ -38,7 +92,7 @@ def consumer(stg, clt):
             s.sendto("Key already exists!!!", clt)  # return case key already exists
     elif flg == '2':
         if key not in dty:  # return case key doesn't exists
-            s.sendto("Key don't exist!!!", clt)
+            s.sendto("Key dont exist!!!", clt)
         else:
             s.sendto(dty.get(key), clt)  # retrieve and send string case key exist
     elif flg == '3':
@@ -50,7 +104,7 @@ def consumer(stg, clt):
             s.sendto("Updated!!!", clt)
     elif flg == '4':
         if key not in dty:  # if key doesn't exists
-            s.sendto("Key not found to delete!!!")
+            s.sendto("Key not found to delete!!!", clt)
         else:
             s.sendto("Deleted: ", clt)
             s.sendto(dty.pop(key), clt)
@@ -59,8 +113,8 @@ def consumer(stg, clt):
 def receiver(rec, client):
     print ("Received data from: ", client)
     print('Message received: ', rec)
-    f.put(rec)  # insert received command in a list
-    f.task_done()
+    g.put(rec)  # insert received command in a list
+    g.task_done()
     print('Command inserted in Queue')
 
 
@@ -119,8 +173,10 @@ while True:
     data, cln = s.recvfrom(1400)  # cat rec = map <flag.key, string> client (host, port)
     treceiver = Thread(target=receiver, args=(data, cln))  # thread receiver
     tworker = Thread(target=worker, args=(cln,))  # thread worker
+    tgrpc = Thread(target=grpcTh)  # gRPC thread
     treceiver.start()
     tworker.start()
-    f.join()
+    tgrpc.start()
+    g.join()
     d.join()
     p.join()

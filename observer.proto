@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+service Observer {
+    rpc monitor (KeyReq) returns (InfoRep) {}
+}
+
+    message KeyReq {
+    string key = 1;
+}
+
+    message InfoRep {
+    string info = 1;
+}
