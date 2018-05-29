@@ -6,17 +6,15 @@ import ConfigParser
 from threading import Thread
 import time
 from Queue import Queue
-import grpc
-from concurrent import futures
-import observer_pb2
-import observer_pb2_grpc
+import pickle
+import os
 
 config = ConfigParser.ConfigParser()
 config.read("connection.ini")  # reading the config file
 
 host = ''  # I AM THE HOST
 port = config.getint('Section one', 'port')  # using the config file values
-gport = config.getint('Section one', 'grpcport')  # cat the gRPC Port
+
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)  # creating a socket object
 orig = (host, port)
 s.bind(orig)  # bind the host and the port
@@ -26,58 +24,8 @@ s.bind(orig)  # bind the host and the port
 f = Queue()  # Queue for receive commands
 d = Queue()  # Queue for log in disk
 p = Queue()  # Queue for consume commands
-g = Queue()  # Queue for gRPC
 
 dty = {}  # empty dictionary
-
-
-def monit(kvalue):
-    if not g:  # if queue f is empty, sleep thread
-        # print('Worker...Waiting...')
-        time.sleep(1)
-    else:
-        val = g.get()  # retrieve new Queue element to monitore
-        f.put(val)  # put the elemente in Queue to process
-        f.task_done()
-        f.join()
-        if kvalue in val:
-            return val
-        else:
-            return 'Key doesent exist!!!'
-
-
-class ObserverService(observer_pb2_grpc.ObserverServicer):
-
-    def monitor(self, request, context):
-        i = 0
-        while i != 1:
-            temp = request.key
-            if ' ' in temp:
-                stp, ky = temp.split(' ')
-                if stp == 'stop':
-                    i = 1
-            else:
-                response = observer_pb2.InfoRep()
-                response.info = monit(request.key)
-                return response
-
-
-
-
-def grpcTh():
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-
-    observer_pb2_grpc.add_ObserverServicer_to_server(ObserverService(), server)
-
-    print('Starting gRPC Thread. Listen on port ', gport)
-    server.add_insecure_port('[::]:%s' % gport)
-    server.start()
-
-    try:  # loop to keep alive
-        while True:
-            time.sleep(86400)
-    except KeyboardInterrupt:
-        server.stop(0)
 
 
 def consumer(stg, clt):
@@ -113,8 +61,8 @@ def consumer(stg, clt):
 def receiver(rec, client):
     print ("Received data from: ", client)
     print('Message received: ', rec)
-    g.put(rec)  # insert received command in a list
-    g.task_done()
+    f.put(rec)  # insert received command in a list
+    f.task_done()
     print('Command inserted in Queue')
 
 
@@ -167,16 +115,45 @@ def retrieveServer():
         print 'Nothing to retrieve! All looks good!'
 
 
+def retrieveSnapshot():
+    try:
+        with open('snapshot.txt', 'rb') as snpt:
+            global dty
+            dty = pickle.load(snpt)
+            snpt.close()
+            print (dty)
+    except IOError:
+        print 'None snapshot to load!'
+
+
+def snapshot():
+    time.sleep(30)
+    if os.path.isfile('snapshot.txt'):
+        os.remove('snapshot.txt')
+    else:
+        snap = open('snapshot.txt', 'wb')   # create file
+        pickle.dump(dty, snap)
+        snap.close()
+        print 'Snapshot created!'
+        if os.path.isfile('server.txt'):
+            os.remove('server.txt')
+            print 'Log deleted!'
+        else:
+            print 'Log file doesnt exists!'
+
 # for i in range(num_threads):
+retrieveSnapshot()
 retrieveServer()
+
 while True:
+    tsnapshot = Thread(target=snapshot)
+    tsnapshot.start()
     data, cln = s.recvfrom(1400)  # cat rec = map <flag.key, string> client (host, port)
     treceiver = Thread(target=receiver, args=(data, cln))  # thread receiver
     tworker = Thread(target=worker, args=(cln,))  # thread worker
-    tgrpc = Thread(target=grpcTh)  # gRPC thread
     treceiver.start()
     tworker.start()
-    tgrpc.start()
-    g.join()
+
+    f.join()
     d.join()
     p.join()
